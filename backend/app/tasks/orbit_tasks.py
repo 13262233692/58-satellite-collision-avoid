@@ -1,67 +1,84 @@
 from __future__ import annotations
 
+import logging
+import uuid
 from datetime import datetime, timezone
 from math import floor
 from typing import Any, Dict, List, Optional
 
 import numpy as np
-from celery import chord
 from dateutil.parser import isoparse
 
 from app.tasks.celery_app import celery_app
 
+logger = logging.getLogger(__name__)
 
-@celery_app.task(name="app.tasks.orbit_tasks.propagate_orbits_task")
-def propagate_orbits_task(tle_entries: List[dict], start_time: str) -> List[dict]:
-    """Propagate orbits for a batch of TLE entries starting from the given time.
 
-    Args:
-        tle_entries: List of dicts with 'tle_line1' and 'tle_line2' keys.
-        start_time: ISO-8601 datetime string for propagation start.
+def _generate_batch_id() -> str:
+    return datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S") + "-" + uuid.uuid4().hex[:8]
 
-    Returns:
-        Serialized list of propagation results.
-    """
+
+@celery_app.task(name="app.tasks.orbit_tasks.propagate_orbits_task", bind=True, max_retries=2)
+def propagate_orbits_task(self, tle_entries: List[dict], start_time: str, batch_id: Optional[str] = None) -> dict:
+    if batch_id is None:
+        batch_id = _generate_batch_id()
+
     from app.propagation.sgp4_engine import propagate_batch
+    from app.db import sync_session_scope, PropagationRepository, TLERepository
 
     dt = isoparse(start_time)
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
 
     results = propagate_batch(tle_entries, dt)
-    return [r.model_dump(mode="json") for r in results]
+    serialized = [r.model_dump(mode="json") for r in results]
+
+    try:
+        with sync_session_scope() as session:
+            tle_dicts = []
+            for entry in tle_entries:
+                norad_id = int(entry["tle_line2"][2:7].strip())
+                tle_dicts.append({
+                    "norad_id": norad_id,
+                    "name": f"NORAD {norad_id}",
+                    "line1": entry["tle_line1"],
+                    "line2": entry["tle_line2"],
+                })
+            TLERepository.bulk_upsert(session, tle_dicts)
+            PropagationRepository.save_results(session, batch_id, serialized)
+            logger.info("Batch %s: saved %d propagation results", batch_id, len(serialized))
+    except Exception:
+        logger.exception("Batch %s: DB save failed, propagation data still returned", batch_id)
+
+    return {"batch_id": batch_id, "results": serialized}
 
 
-@celery_app.task(name="app.tasks.orbit_tasks.generate_czml_task")
-def generate_czml_task(propagation_data: dict) -> str:
-    """Generate a CZML document from propagation results.
-
-    Args:
-        propagation_data: Serialized propagation results (list of result dicts).
-
-    Returns:
-        CZML document as a JSON string.
-    """
+@celery_app.task(name="app.tasks.orbit_tasks.generate_czml_task", bind=True, max_retries=1)
+def generate_czml_task(self, propagation_data: dict) -> dict:
     import json
 
-    from app.czml import build_czml
+    from app.czml import build_czml, czml_to_json
+    from app.db import sync_session_scope, CZMLCacheRepository
 
-    czml_doc = build_czml(propagation_data)
-    return json.dumps(czml_doc)
+    batch_id = propagation_data.get("batch_id", _generate_batch_id())
+    results = propagation_data.get("results", propagation_data) if isinstance(propagation_data, dict) else propagation_data
+
+    czml_doc = build_czml(results)
+    czml_json = czml_to_json(czml_doc)
+
+    try:
+        with sync_session_scope() as session:
+            CZMLCacheRepository.save(session, batch_id, czml_json, len(results) if isinstance(results, list) else 0)
+            logger.info("Batch %s: CZML cached (%d bytes)", batch_id, len(czml_json))
+    except Exception:
+        logger.exception("Batch %s: CZML cache save failed", batch_id)
+
+    return {"batch_id": batch_id, "czml": czml_json}
 
 
 def _compute_spatial_grid(
     positions: np.ndarray, threshold_km: float
 ) -> Dict[tuple, List[int]]:
-    """Assign position indices to spatial grid cells.
-
-    Args:
-        positions: Nx3 array of ECEF positions in km.
-        threshold_km: Cell size in km (matches collision threshold).
-
-    Returns:
-        Dict mapping (cell_x, cell_y, cell_z) to list of object indices.
-    """
     cells: Dict[tuple, List[int]] = {}
     inv_cell = 1.0 / threshold_km
     for idx in range(positions.shape[0]):
@@ -83,17 +100,6 @@ def _check_cell_pairs(
     time_str: str,
     warnings: List[dict],
 ) -> None:
-    """Check pairwise distances within a cell and record close approaches.
-
-    Args:
-        positions: Nx3 array of all positions.
-        velocities: Nx3 array of all velocities.
-        indices: Object indices within this cell.
-        threshold_km: Distance threshold.
-        sat_ids: NORAD IDs corresponding to each index.
-        time_str: ISO time string for this step.
-        warnings: List to append collision warnings to.
-    """
     if len(indices) < 2:
         return
 
@@ -131,28 +137,19 @@ def _check_cell_pairs(
         )
 
 
-@celery_app.task(name="app.tasks.orbit_tasks.detect_collision_warnings_task")
+@celery_app.task(name="app.tasks.orbit_tasks.detect_collision_warnings_task", bind=True, max_retries=1)
 def detect_collision_warnings_task(
-    propagation_data: dict, threshold_km: float = 5.0
-) -> List[dict]:
-    """Detect close approaches between all objects using a spatial grid.
+    self, propagation_data: dict, threshold_km: float = 5.0, batch_id: Optional[str] = None
+) -> dict:
+    from app.db import sync_session_scope, CollisionWarningRepository
 
-    Uses threshold_km-sized spatial cells so only objects in the same or
-    adjacent cells are compared, achieving O(n) average complexity instead
-    of O(n²) for pairwise checks.
+    if batch_id is None:
+        batch_id = _generate_batch_id()
 
-    Args:
-        propagation_data: Serialized propagation results mapping norad_id to
-            position/velocity time series, or a list of propagation result dicts.
-        threshold_km: Distance threshold in km for close approach detection.
-
-    Returns:
-        List of collision warning dicts.
-    """
-    results = propagation_data if isinstance(propagation_data, list) else propagation_data.get("results", [])
+    results = propagation_data.get("results", propagation_data) if isinstance(propagation_data, dict) else propagation_data
 
     if not results:
-        return []
+        return {"batch_id": batch_id, "warnings": []}
 
     time_steps: Dict[str, Dict[int, dict]] = {}
     for sat_result in results:
@@ -162,7 +159,7 @@ def detect_collision_warnings_task(
             time_steps.setdefault(t, {})[norad_id] = pv
 
     if not time_steps:
-        return []
+        return {"batch_id": batch_id, "warnings": []}
 
     sorted_times = sorted(time_steps.keys())
     warnings: List[dict] = []
@@ -213,22 +210,21 @@ def detect_collision_warnings_task(
             )
 
     warnings.sort(key=lambda w: (w["time"], w["distance_km"]))
-    return warnings
+
+    try:
+        with sync_session_scope() as session:
+            CollisionWarningRepository.save_warnings(session, batch_id, warnings)
+            logger.info("Batch %s: saved %d collision warnings", batch_id, len(warnings))
+    except Exception:
+        logger.exception("Batch %s: collision warnings DB save failed", batch_id)
+
+    return {"batch_id": batch_id, "warnings": warnings}
 
 
-@celery_app.task(name="app.tasks.orbit_tasks.full_pipeline_task")
-def full_pipeline_task(tle_file_path: str) -> dict:
-    """Execute the full collision-avoidance pipeline.
+@celery_app.task(name="app.tasks.orbit_tasks.full_pipeline_task", bind=True, max_retries=1)
+def full_pipeline_task(self, tle_file_path: str) -> dict:
+    batch_id = _generate_batch_id()
 
-    Reads and parses a TLE file, propagates all orbits, then generates
-    CZML and collision warnings in parallel.
-
-    Args:
-        tle_file_path: Path to the TLE file to process.
-
-    Returns:
-        Dict with 'czml' (JSON string) and 'collision_warnings' (list).
-    """
     from app.tle.parser import parse_tle_file
 
     entries = parse_tle_file(tle_file_path, strict=False)
@@ -238,12 +234,15 @@ def full_pipeline_task(tle_file_path: str) -> dict:
     ]
 
     start_time = datetime.now(timezone.utc).isoformat()
-    propagation_results = propagate_orbits_task(tle_dicts, start_time)
 
-    czml_result = generate_czml_task(propagation_results)
-    collision_warnings = detect_collision_warnings_task(propagation_results)
+    propagation_result = propagate_orbits_task(tle_dicts, start_time, batch_id=batch_id)
+    batch_id = propagation_result["batch_id"]
+
+    czml_result = generate_czml_task(propagation_result)
+    collision_result = detect_collision_warnings_task(propagation_result, batch_id=batch_id)
 
     return {
-        "czml": czml_result,
-        "collision_warnings": collision_warnings,
+        "batch_id": batch_id,
+        "czml": czml_result.get("czml", ""),
+        "collision_warnings": collision_result.get("warnings", []),
     }

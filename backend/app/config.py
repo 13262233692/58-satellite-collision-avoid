@@ -35,6 +35,19 @@ class CZMLSettings(BaseSettings):
     model_config = {"env_prefix": "CZML_"}
 
 
+class DatabaseSettings(BaseSettings):
+    url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/satellite_collision"
+    sync_url: str = "postgresql+psycopg2://postgres:postgres@localhost:5432/satellite_collision"
+    pool_size: int = 20
+    max_overflow: int = 10
+    pool_timeout: float = 5.0
+    pool_recycle: int = 1800
+    pool_pre_ping: bool = True
+    echo: bool = False
+
+    model_config = {"env_prefix": "DB_"}
+
+
 class APISettings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
@@ -49,6 +62,7 @@ class Settings(BaseSettings):
     celery: CelerySettings = CelerySettings()
     sgp4: SGP4Settings = SGP4Settings()
     czml: CZMLSettings = CZMLSettings()
+    db: DatabaseSettings = DatabaseSettings()
     api: APISettings = APISettings()
 
     data_dir: Path = Path(__file__).resolve().parent / "data"
