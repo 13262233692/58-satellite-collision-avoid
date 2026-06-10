@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>在轨防碰撞监测大屏</title>
+    <link rel="stylesheet" href="https://cesium.com/downloads/cesiumjs/releases/1.114/Build/Cesium/Widgets/widgets.css">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="app">
+        <header id="top-bar">
+            <div class="top-bar-left">
+                <span class="logo-icon">◉</span>
+                <h1>在轨防碰撞监测大屏</h1>
+            </div>
+            <div class="top-bar-center">
+                <span id="current-time" class="clock"></span>
+            </div>
+            <div class="top-bar-right">
+                <span class="status-indicator online"></span>
+                <span>系统在线</span>
+                <span class="divider">|</span>
+                <span id="data-refresh-status">数据刷新: --</span>
+            </div>
+        </header>
+
+        <div id="main-container">
+            <aside id="left-panel" class="sidebar">
+                <div class="panel-section">
+                    <h2 class="panel-title"><span class="icon">◈</span> 在轨统计</h2>
+                    <div class="stat-grid">
+                        <div class="stat-card">
+                            <div class="stat-value" id="stat-total">--</div>
+                            <div class="stat-label">在轨卫星总数</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value warning" id="stat-debris">--</div>
+                            <div class="stat-label">空间碎片数</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value danger" id="stat-warnings">--</div>
+                            <div class="stat-label">碰撞预警</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value info" id="stat-tracking">--</div>
+                            <div class="stat-label">活跃跟踪</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel-section">
+                    <h2 class="panel-title"><span class="icon">◈</span> 轨道分布</h2>
+                    <div id="orbit-chart" class="chart-container">
+                        <div class="chart-row">
+                            <span class="chart-label">LEO</span>
+                            <div class="chart-bar-bg">
+                                <div class="chart-bar leo" id="bar-leo" style="width:0%"></div>
+                            </div>
+                            <span class="chart-value" id="val-leo">0</span>
+                        </div>
+                        <div class="chart-row">
+                            <span class="chart-label">MEO</span>
+                            <div class="chart-bar-bg">
+                                <div class="chart-bar meo" id="bar-meo" style="width:0%"></div>
+                            </div>
+                            <span class="chart-value" id="val-meo">0</span>
+                        </div>
+                        <div class="chart-row">
+                            <span class="chart-label">GEO</span>
+                            <div class="chart-bar-bg">
+                                <div class="chart-bar geo" id="bar-geo" style="width:0%"></div>
+                            </div>
+                            <span class="chart-value" id="val-geo">0</span>
+                        </div>
+                        <div class="chart-row">
+                            <span class="chart-label">HEO</span>
+                            <div class="chart-bar-bg">
+                                <div class="chart-bar heo" id="bar-heo" style="width:0%"></div>
+                            </div>
+                            <span class="chart-value" id="val-heo">0</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel-section">
+                    <h2 class="panel-title"><span class="icon">◈</span> 最近接近事件</h2>
+                    <div id="closest-approaches" class="approach-list">
+                        <div class="loading-placeholder">加载中...</div>
+                    </div>
+                </div>
+            </aside>
+
+            <div id="cesium-container">
+                <div id="cesiumViewer"></div>
+                <div id="satellite-info-box" class="hidden">
+                    <div class="info-box-header">
+                        <span id="info-box-title">卫星信息</span>
+                        <button id="info-box-close" class="close-btn">&times;</button>
+                    </div>
+                    <div class="info-box-body">
+                        <div class="info-row"><span class="info-label">名称:</span><span id="info-name">--</span></div>
+                        <div class="info-row"><span class="info-label">NORAD ID:</span><span id="info-norad">--</span></div>
+                        <div class="info-row"><span class="info-label">轨道倾角:</span><span id="info-inclination">--</span></div>
+                        <div class="info-row"><span class="info-label">轨道高度:</span><span id="info-altitude">--</span></div>
+                        <div class="info-row"><span class="info-label">轨道周期:</span><span id="info-period">--</span></div>
+                        <div class="info-row"><span class="info-label">偏心率:</span><span id="info-eccentricity">--</span></div>
+                    </div>
+                </div>
+            </div>
+
+            <aside id="right-panel" class="sidebar">
+                <div class="panel-section">
+                    <h2 class="panel-title"><span class="icon">◈</span> 碰撞预警列表</h2>
+                    <div id="collision-alert-list" class="alert-list">
+                        <div class="loading-placeholder">加载中...</div>
+                    </div>
+                </div>
+            </aside>
+        </div>
+
+        <footer id="bottom-bar">
+            <div class="timeline-controls">
+                <button id="btn-rewind" class="ctrl-btn" title="快退">&#9198;</button>
+                <button id="btn-play" class="ctrl-btn active" title="播放/暂停">&#9654;</button>
+                <button id="btn-forward" class="ctrl-btn" title="快进">&#9197;</button>
+                <div class="speed-control">
+                    <label>倍速:</label>
+                    <select id="speed-selector">
+                        <option value="1">1x</option>
+                        <option value="10">10x</option>
+                        <option value="60" selected>60x</option>
+                        <option value="360">360x</option>
+                        <option value="1440">1440x</option>
+                    </select>
+                </div>
+            </div>
+            <div class="timeline-display">
+                <span id="sim-time" class="sim-time">--</span>
+                <div class="timeline-track">
+                    <div id="timeline-progress" class="timeline-fill"></div>
+                    <div id="timeline-marker" class="timeline-thumb"></div>
+                </div>
+                <span id="sim-time-end" class="sim-time">--</span>
+            </div>
+            <div class="timeline-info">
+                <span>24h 推演周期</span>
+                <span id="elapsed-time">已过: 0:00:00</span>
+            </div>
+        </footer>
+    </div>
+
+    <script src="https://cesium.com/downloads/cesiumjs/releases/1.114/Build/Cesium/Cesium.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
