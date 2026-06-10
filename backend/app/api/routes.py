@@ -21,6 +21,7 @@ _latest_batch_id: Optional[str] = None
 _memory_czml: Optional[str] = None
 _memory_warnings: Optional[List[dict]] = None
 _memory_propagation: Optional[List[dict]] = None
+_memory_maneuvers: Optional[List[dict]] = None
 _db_status: Optional[bool] = None
 _db_status_ts: float = 0.0
 _DB_CHECK_INTERVAL: float = 30.0
@@ -329,6 +330,111 @@ async def health_check() -> Dict[str, Any]:
         "status": "healthy" if db_status == "connected" else "degraded",
         "database": db_status,
         "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@router.get("/maneuvers", summary="获取全部变轨机动指令")
+async def get_maneuvers() -> List[dict]:
+    global _memory_maneuvers
+
+    if _memory_maneuvers is not None:
+        return _memory_maneuvers
+
+    from app.maneuver import generate_demo_maneuvers
+    _memory_maneuvers = generate_demo_maneuvers()
+    return _memory_maneuvers
+
+
+@router.get("/maneuvers/{satellite_norad_id}", summary="获取指定卫星的变轨指令")
+async def get_satellite_maneuver(satellite_norad_id: int) -> dict:
+    maneuvers = await get_maneuvers()
+    for m in maneuvers:
+        if m.get("satellite_norad_id") == satellite_norad_id:
+            return m
+    raise HTTPException(status_code=404, detail=f"No maneuver plan for NORAD {satellite_norad_id}")
+
+
+@router.post("/maneuvers/calculate", summary="为碰撞警告计算变轨方案")
+async def calculate_maneuver(
+    satellite_norad_id: int = Query(..., description="卫星 NORAD ID"),
+    debris_norad_id: int = Query(..., description="碎片 NORAD ID"),
+    miss_distance_km: float = Query(..., description="最近交会距离(km)"),
+    tca_time: str = Query(..., description="TCA 时刻 ISO 格式"),
+    severity: str = Query("warning", description="预警等级"),
+    current_altitude_km: Optional[float] = Query(None, description="当前轨道高度(km)"),
+    satellite_mass_kg: float = Query(500.0, description="卫星质量(kg)"),
+    isp_seconds: float = Query(300.0, description="发动机比冲(s)"),
+    thrust_N: float = Query(20.0, description="推力(N)"),
+) -> dict:
+    from app.maneuver import generate_maneuver_for_warning
+
+    warning = {
+        "satellite1_id": satellite_norad_id,
+        "satellite2_id": debris_norad_id,
+        "distance_km": miss_distance_km,
+        "time": tca_time,
+        "severity": severity,
+    }
+
+    satellite_tle = None
+    if current_altitude_km is not None:
+        satellite_tle = {
+            "name": f"NORAD {satellite_norad_id}",
+            "eccentricity": 0.0005,
+            "mean_motion": 15.5,
+            "_override_altitude": current_altitude_km,
+        }
+
+    maneuver = generate_maneuver_for_warning(
+        warning=warning,
+        satellite_tle=satellite_tle,
+        satellite_mass_kg=satellite_mass_kg,
+        isp_seconds=isp_seconds,
+        thrust_N=thrust_N,
+    )
+
+    if maneuver is None:
+        raise HTTPException(status_code=500, detail="Maneuver calculation failed")
+
+    return maneuver.model_dump(mode="json")
+
+
+@router.post("/maneuvers/generate-from-warnings", summary="根据碰撞预警批量生成变轨方案")
+async def generate_maneuvers_from_warnings() -> Dict[str, Any]:
+    global _memory_maneuvers, _memory_warnings
+
+    _ensure_batch()
+
+    warnings = _memory_warnings or []
+
+    if not warnings:
+        from app.maneuver import generate_demo_maneuvers
+        _memory_maneuvers = generate_demo_maneuvers()
+        return {
+            "status": "no_warnings",
+            "message": "No collision warnings found, using demo maneuvers",
+            "maneuver_count": len(_memory_maneuvers),
+        }
+
+    from app.maneuver.planner import generate_maneuvers_for_warnings
+
+    tle_lookup = {}
+    if _memory_propagation:
+        for r in _memory_propagation:
+            nid = r.get("norad_id", 0)
+            tle_lookup[nid] = {
+                "name": r.get("name", f"NORAD {nid}"),
+                "eccentricity": 0.0005,
+                "mean_motion": 15.5,
+            }
+
+    maneuvers = generate_maneuvers_for_warnings(warnings, tle_lookup=tle_lookup)
+    _memory_maneuvers = [m.model_dump(mode="json") for m in maneuvers]
+
+    return {
+        "status": "ok",
+        "warning_count": len(warnings),
+        "maneuver_count": len(_memory_maneuvers),
     }
 
 

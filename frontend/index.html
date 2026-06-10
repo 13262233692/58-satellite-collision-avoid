@@ -116,6 +116,128 @@
                         <div class="loading-placeholder">加载中...</div>
                     </div>
                 </div>
+
+                <div class="panel-section" id="maneuver-panel" style="display:none;">
+                    <h2 class="panel-title"><span class="icon" style="color:#ff6b35;">◈</span> 变轨机动指令</h2>
+                    <div id="maneuver-content" class="maneuver-content">
+                        <div class="maneuver-header" id="maneuver-header">
+                            <div class="maneuver-satellite" id="maneuver-sat-name">--</div>
+                            <div class="maneuver-strategy" id="maneuver-strategy">--</div>
+                        </div>
+
+                        <div class="maneuver-orbit-info">
+                            <div class="orbit-change">
+                                <div class="orbit-alt">
+                                    <span class="orbit-label">原轨道</span>
+                                    <span class="orbit-value" id="maneuver-alt-orig">--</span>
+                                </div>
+                                <div class="orbit-arrow">→</div>
+                                <div class="orbit-alt">
+                                    <span class="orbit-label">目标轨道</span>
+                                    <span class="orbit-value" id="maneuver-alt-target">--</span>
+                                </div>
+                            </div>
+                            <div class="orbit-delta">
+                                <span>抬升高度: <strong id="maneuver-elevation">--</strong></span>
+                            </div>
+                        </div>
+
+                        <div class="burn-card burn1-card" id="burn1-card">
+                            <div class="burn-header">
+                                <span class="burn-indicator burn-ind-1"></span>
+                                <span class="burn-label" id="burn1-label">点火 #1</span>
+                                <span class="burn-type" id="burn1-type">轨道切入</span>
+                            </div>
+                            <div class="burn-details">
+                                <div class="burn-detail-row">
+                                    <span class="burn-key">点火时刻</span>
+                                    <span class="burn-val burn-time" id="burn1-time">--</span>
+                                </div>
+                                <div class="burn-detail-row">
+                                    <span class="burn-key">点火姿态</span>
+                                    <span class="burn-val" id="burn1-attitude">--</span>
+                                </div>
+                                <div class="burn-detail-row">
+                                    <span class="burn-key">速度增量</span>
+                                    <span class="burn-val burn-dv" id="burn1-dv">--</span>
+                                </div>
+                                <div class="burn-detail-row">
+                                    <span class="burn-key">持续秒数</span>
+                                    <span class="burn-val" id="burn1-duration">--</span>
+                                </div>
+                                <div class="burn-detail-row">
+                                    <span class="burn-key">燃料消耗</span>
+                                    <span class="burn-val" id="burn1-fuel">--</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="transfer-info" id="transfer-info">
+                            <div class="transfer-icon">⟳</div>
+                            <span>转移轨道飞行: <strong id="maneuver-transfer-time">--</strong></span>
+                        </div>
+
+                        <div class="burn-card burn2-card" id="burn2-card">
+                            <div class="burn-header">
+                                <span class="burn-indicator burn-ind-2"></span>
+                                <span class="burn-label" id="burn2-label">点火 #2</span>
+                                <span class="burn-type" id="burn2-type">轨道圆化</span>
+                            </div>
+                            <div class="burn-details">
+                                <div class="burn-detail-row">
+                                    <span class="burn-key">点火时刻</span>
+                                    <span class="burn-val burn-time" id="burn2-time">--</span>
+                                </div>
+                                <div class="burn-detail-row">
+                                    <span class="burn-key">点火姿态</span>
+                                    <span class="burn-val" id="burn2-attitude">--</span>
+                                </div>
+                                <div class="burn-detail-row">
+                                    <span class="burn-key">速度增量</span>
+                                    <span class="burn-val burn-dv" id="burn2-dv">--</span>
+                                </div>
+                                <div class="burn-detail-row">
+                                    <span class="burn-key">持续秒数</span>
+                                    <span class="burn-val" id="burn2-duration">--</span>
+                                </div>
+                                <div class="burn-detail-row">
+                                    <span class="burn-key">燃料消耗</span>
+                                    <span class="burn-val" id="burn2-fuel">--</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="maneuver-summary">
+                            <div class="summary-row">
+                                <span>总 ΔV</span>
+                                <span class="summary-val" id="maneuver-total-dv">--</span>
+                            </div>
+                            <div class="summary-row">
+                                <span>总燃料</span>
+                                <span class="summary-val" id="maneuver-total-fuel">--</span>
+                            </div>
+                            <div class="summary-row">
+                                <span>规避后距离</span>
+                                <span class="summary-val summary-safe" id="maneuver-new-miss">--</span>
+                            </div>
+                            <div class="summary-row">
+                                <span>安全裕度</span>
+                                <span class="summary-val" id="maneuver-safety-margin">--</span>
+                            </div>
+                        </div>
+
+                        <div class="maneuver-actions">
+                            <button class="action-btn approve-btn" id="btn-approve-maneuver">批准执行</button>
+                            <button class="action-btn reject-btn" id="btn-reject-maneuver">驳回</button>
+                        </div>
+
+                        <div class="maneuver-nav" id="maneuver-nav">
+                            <button class="nav-btn" id="btn-prev-maneuver">◀ 上一条</button>
+                            <span id="maneuver-index">1 / 3</span>
+                            <button class="nav-btn" id="btn-next-maneuver">下一条 ▶</button>
+                        </div>
+                    </div>
+                </div>
             </aside>
         </div>
 

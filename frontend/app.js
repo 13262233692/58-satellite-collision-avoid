@@ -5,6 +5,7 @@
     var CZML_ENDPOINT = API_BASE + '/czml/stream';
     var STATS_ENDPOINT = API_BASE + '/statistics';
     var ALERTS_ENDPOINT = API_BASE + '/collisions';
+    var MANEUVER_ENDPOINT = API_BASE + '/maneuvers';
     var REFRESH_INTERVAL_MS = 30000;
 
     var viewer = null;
@@ -12,6 +13,8 @@
     var clockMultiplier = 60;
     var isPlaying = true;
     var refreshTimer = null;
+    var maneuverData = [];
+    var maneuverIndex = 0;
     var statsData = {
         total: 0,
         debris: 0,
@@ -23,6 +26,7 @@
     function init() {
         initCesium();
         bindControls();
+        bindManeuverControls();
         startClock();
         updateCurrentTime();
         setInterval(updateCurrentTime, 1000);
@@ -217,6 +221,7 @@
         loadCzmlData();
         loadStats();
         loadAlerts();
+        loadManeuvers();
         startAutoRefresh();
     }
 
@@ -226,6 +231,7 @@
             loadCzmlData();
             loadStats();
             loadAlerts();
+            loadManeuvers();
             document.getElementById('data-refresh-status').textContent =
                 '数据刷新: ' + new Date().toLocaleTimeString('zh-CN');
         }, REFRESH_INTERVAL_MS);
@@ -649,6 +655,140 @@
             pad(now.getMinutes()) + ':' +
             pad(now.getSeconds()) + ' UTC+8';
         document.getElementById('current-time').textContent = str;
+    }
+
+    function loadManeuvers() {
+        fetch(MANEUVER_ENDPOINT)
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                maneuverData = data || [];
+                if (maneuverData.length > 0) {
+                    maneuverIndex = 0;
+                    renderManeuver(maneuverData[0]);
+                    document.getElementById('maneuver-panel').style.display = '';
+                }
+            })
+            .catch(function () {
+                // maneuvers not available
+            });
+    }
+
+    function renderManeuver(m) {
+        if (!m) return;
+        var h = m.hohmann || {};
+        var b1 = m.burn1 || {};
+        var b2 = m.burn2 || {};
+
+        document.getElementById('maneuver-sat-name').textContent = m.satellite_name || '--';
+        document.getElementById('maneuver-strategy').textContent = (m.strategy || '').replace(/_/g, ' ');
+
+        document.getElementById('maneuver-alt-orig').textContent = (h.original_altitude_km || '--') + ' km';
+        document.getElementById('maneuver-alt-target').textContent = (h.target_altitude_km || '--') + ' km';
+        document.getElementById('maneuver-elevation').textContent = '+' + (h.elevation_height_km || '--') + ' km';
+
+        document.getElementById('burn1-label').textContent = b1.label ? b1.label.split('·')[0].trim() : '点火 #1';
+        document.getElementById('burn1-type').textContent = '轨道切入';
+        document.getElementById('burn1-time').textContent = formatBurnTime(b1.ignition_time);
+        document.getElementById('burn1-attitude').textContent = b1.attitude || 'PROGRADE';
+        document.getElementById('burn1-dv').textContent = (b1.delta_v_ms || '--') + ' m/s';
+        document.getElementById('burn1-duration').textContent = (b1.duration_seconds || '--') + ' s';
+        document.getElementById('burn1-fuel').textContent = formatFuel(b1.fuel_kg);
+
+        document.getElementById('maneuver-transfer-time').textContent = (h.transfer_time_minutes || '--') + ' min';
+
+        document.getElementById('burn2-label').textContent = b2.label ? b2.label.split('·')[0].trim() : '点火 #2';
+        document.getElementById('burn2-type').textContent = '轨道圆化';
+        document.getElementById('burn2-time').textContent = formatBurnTime(b2.ignition_time);
+        document.getElementById('burn2-attitude').textContent = b2.attitude || 'PROGRADE';
+        document.getElementById('burn2-dv').textContent = (b2.delta_v_ms || '--') + ' m/s';
+        document.getElementById('burn2-duration').textContent = (b2.duration_seconds || '--') + ' s';
+        document.getElementById('burn2-fuel').textContent = formatFuel(b2.fuel_kg);
+
+        document.getElementById('maneuver-total-dv').textContent = (h.delta_v_total_ms || '--') + ' m/s';
+        document.getElementById('maneuver-total-fuel').textContent = formatFuel(h.fuel_kg);
+        document.getElementById('maneuver-new-miss').textContent = (m.new_miss_distance_km || '--') + ' km';
+        document.getElementById('maneuver-safety-margin').textContent = '+' + (m.safety_margin_km || '--') + ' km';
+
+        document.getElementById('maneuver-index').textContent = (maneuverIndex + 1) + ' / ' + maneuverData.length;
+    }
+
+    function formatBurnTime(isoStr) {
+        if (!isoStr) return '--';
+        try {
+            var d = new Date(isoStr);
+            return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds()) + ' UTC';
+        } catch (e) {
+            return '--';
+        }
+    }
+
+    function formatFuel(kg) {
+        if (kg === undefined || kg === null) return '--';
+        if (kg < 0.01) return (kg * 1000).toFixed(2) + ' g';
+        return kg.toFixed(4) + ' kg';
+    }
+
+    function bindManeuverControls() {
+        document.getElementById('btn-approve-maneuver').addEventListener('click', function () {
+            var m = maneuverData[maneuverIndex];
+            if (m) {
+                m.status = 'APPROVED';
+                document.getElementById('btn-approve-maneuver').textContent = '已批准';
+                document.getElementById('btn-approve-maneuver').disabled = true;
+                document.getElementById('btn-approve-maneuver').style.opacity = '0.5';
+            }
+        });
+
+        document.getElementById('btn-reject-maneuver').addEventListener('click', function () {
+            var m = maneuverData[maneuverIndex];
+            if (m) {
+                m.status = 'REJECTED';
+                document.getElementById('btn-reject-maneuver').textContent = '已驳回';
+                document.getElementById('btn-reject-maneuver').disabled = true;
+                document.getElementById('btn-reject-maneuver').style.opacity = '0.5';
+            }
+        });
+
+        document.getElementById('btn-prev-maneuver').addEventListener('click', function () {
+            if (maneuverData.length === 0) return;
+            maneuverIndex = (maneuverIndex - 1 + maneuverData.length) % maneuverData.length;
+            renderManeuver(maneuverData[maneuverIndex]);
+            resetActionButtons();
+        });
+
+        document.getElementById('btn-next-maneuver').addEventListener('click', function () {
+            if (maneuverData.length === 0) return;
+            maneuverIndex = (maneuverIndex + 1) % maneuverData.length;
+            renderManeuver(maneuverData[maneuverIndex]);
+            resetActionButtons();
+        });
+    }
+
+    function resetActionButtons() {
+        var m = maneuverData[maneuverIndex];
+        var approveBtn = document.getElementById('btn-approve-maneuver');
+        var rejectBtn = document.getElementById('btn-reject-maneuver');
+
+        if (m && m.status === 'PENDING_APPROVAL') {
+            approveBtn.textContent = '批准执行';
+            approveBtn.disabled = false;
+            approveBtn.style.opacity = '1';
+            rejectBtn.textContent = '驳回';
+            rejectBtn.disabled = false;
+            rejectBtn.style.opacity = '1';
+        } else if (m && m.status === 'APPROVED') {
+            approveBtn.textContent = '已批准';
+            approveBtn.disabled = true;
+            approveBtn.style.opacity = '0.5';
+            rejectBtn.disabled = true;
+            rejectBtn.style.opacity = '0.5';
+        } else if (m && m.status === 'REJECTED') {
+            rejectBtn.textContent = '已驳回';
+            rejectBtn.disabled = true;
+            rejectBtn.style.opacity = '0.5';
+            approveBtn.disabled = true;
+            approveBtn.style.opacity = '0.5';
+        }
     }
 
     if (document.readyState === 'loading') {
